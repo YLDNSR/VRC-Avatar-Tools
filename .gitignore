@@ -1,0 +1,26 @@
+node_modules/
+dist/
+release/
+native/build/
+.DS_Store
+*.log
+build/icon.iconset/
+src/public/models/
+src/public/mediapipe/
+native/test/build/
+
+# Avatars, motions and secrets never belong in the repository
+*.vrm
+*.vrma
+*.glb
+*.gltf
+*.fbx
+*.anim
+*.unitypackage
+*.vavmeta.json
+!test/vavmeta/*.vavmeta.json
+.env
+.env.*
+*secret*.json
+*.pem
+*.p12

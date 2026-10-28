@@ -1,0 +1,23 @@
+{
+  "name": "local.vrcavatartools.exporter",
+  "displayName": "VRC Avatar Tools Exporter",
+  "version": "0.3.0",
+  "unity": "2022.3",
+  "description": "Exports a VRChat avatar (built like an upload: Modular Avatar / NDMF) as VRM 1.0 with lilToon converted to MToon, plus a <name>.vavmeta.json sidecar (Expression Menu and the Gesture / Action / FX animator with baked humanoid clips) for VRC Avatar Tools. Needs UniVRM 0.128-0.131 (com.vrmc.gltf + com.vrmc.vrm), installed separately from git.",
+  "keywords": [
+    "vrchat",
+    "vrm",
+    "univrm",
+    "exporter",
+    "mac"
+  ],
+  "author": {
+    "name": "VRC Avatar Tools"
+  },
+  "vpmDependencies": {
+    "com.vrchat.avatars": "^3.7.0"
+  },
+  "dependencies": {},
+  "legacyFolders": {},
+  "samples": []
+}

@@ -1,0 +1,158 @@
+{
+  "name": "vrc-avatar-tools",
+  "productName": "VRC Avatar Tools",
+  "version": "0.3.2",
+  "description": "VRChat avatar desktop app with motion capture, VMC/VRChat OSC input and Syphon output for OBS",
+  "main": "electron/main.js",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "npm run build:native && vite build && electron .",
+    "start": "electron .",
+    "build:web": "vite build",
+    "build:native": "node scripts/build-native.js",
+    "fetch-models": "node scripts/fetch-models.js",
+    "notices": "node scripts/third-party-notices.js",
+    "typecheck": "tsc --noEmit",
+    "test:vavmeta": "vite build && node scripts/test-vavmeta.js",
+    "dist": "npm run build:native && vite build && electron-builder --mac",
+    "dist:mac": "npm run build:native && vite build && electron-builder --mac",
+    "dist:win": "vite build && node scripts/dist-win.js"
+  },
+  "dependencies": {
+    "smol-toml": "^1.9.1"
+  },
+  "devDependencies": {
+    "@mediapipe/tasks-vision": "^1.1.1",
+    "@pixiv/three-vrm": "^3.5.5",
+    "@pixiv/three-vrm-animation": "^3.5.5",
+    "@types/three": "^0.186.0",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "node-addon-api": "^8.9.2",
+    "node-gyp": "^13.1.0",
+    "three": "^0.186.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "yaml": "^2.9.1"
+  },
+  "author": "VRC Avatar Tools",
+  "build": {
+    "appId": "local.vrcavatartools.app",
+    "productName": "VRC Avatar Tools",
+    "copyright": "VRC Avatar Tools",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**",
+      "dist/**",
+      "resources/**",
+      "package.json",
+      "!**/*.map"
+    ],
+    "asarUnpack": [
+      "native/build/Release/*.node"
+    ],
+    "extraResources": [
+      {
+        "from": "docs",
+        "to": "docs"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      }
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.entertainment",
+      "icon": "build/icon.icns",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSCameraUsageDescription": "웹캠 영상으로 표정과 몸의 움직임을 추적합니다. 영상은 이 Mac 안에서만 처리됩니다.",
+        "NSMicrophoneUsageDescription": "마이크 음성으로 립싱크를 만듭니다. 음성은 이 Mac 안에서만 처리됩니다.",
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "VRM Avatar",
+            "CFBundleTypeExtensions": [
+              "vrm",
+              "glb",
+              "gltf"
+            ],
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate"
+          }
+        ]
+      },
+      "extraResources": [
+        {
+          "from": "native/build/helper",
+          "to": "helper"
+        }
+      ],
+      "artifactName": "VRC-Avatar-Tools-${version}-mac-${arch}.${ext}",
+      "files": [
+        "native/build/Release/vav_native.node"
+      ]
+    },
+    "dmg": {
+      "title": "VRC Avatar Tools"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "VRC-Avatar-Tools-${version}-win-${arch}.${ext}",
+      "fileAssociations": [
+        {
+          "ext": [
+            "vrm",
+            "glb",
+            "gltf"
+          ],
+          "name": "VRM Avatar",
+          "description": "VRM / glTF avatar",
+          "role": "Viewer"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "VRC Avatar Tools",
+      "artifactName": "VRC-Avatar-Tools-${version}-win-${arch}-setup.${ext}"
+    }
+  }
+}

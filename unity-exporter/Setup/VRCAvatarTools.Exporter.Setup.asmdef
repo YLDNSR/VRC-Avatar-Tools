@@ -1,0 +1,27 @@
+{
+    "name": "VRCAvatarTools.Exporter.Setup",
+    "rootNamespace": "VRCAvatarTools.Exporter.Setup",
+    "references": [],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.vrmc.vrm",
+            "expression": "[0.128.0,0.132.0)",
+            "define": "VAV_UNIVRM10"
+        },
+        {
+            "name": "com.vrmc.vrm",
+            "expression": "0.0.0",
+            "define": "VAV_UNIVRM10_ANY"
+        }
+    ],
+    "noEngineReferences": false
+}

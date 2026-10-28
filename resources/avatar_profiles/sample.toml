@@ -1,0 +1,40 @@
+# 아바타 프로필 샘플 / Avatar profile sample
+#
+# 이 파일을 복사해서 이름을 바꾼 뒤 편집하세요. (sample.toml 은 목록에 표시되지 않습니다)
+# Copy this file, rename it, then edit. (sample.toml itself is hidden from the list)
+#
+# name        : 목록에 표시되는 이름 / display name
+# [[expressions]]
+#   source     : 수신하는 표정 이름 (대소문자 무관) / received expression name (case-insensitive)
+#                Joy Angry Sorrow Fun Surprised neutral
+#                A I U E O
+#                Blink Blink_L Blink_R
+#                LookUp LookDown LookLeft LookRight
+#                browDownLeft browDownRight browInnerUp browOuterUpLeft browOuterUpRight
+#   target     : 아바타의 블렌드셰이프 이름 / blendshape (morph target) name on the avatar
+#   renderer   : (생략 가능) 메시 오브젝트 이름. 생략하면 target 을 가진 첫 메시 / optional mesh object name
+#   min_weight : (생략 가능, 0~100) 수신 값 0 일 때의 웨이트 / weight at received value 0 (default 0)
+#   max_weight : (생략 가능, 0~100) 수신 값 1 일 때의 웨이트 / weight at received value 1 (default 100)
+#
+# 같은 source 로 블록을 여러 개 쓰면 하나의 표정으로 여러 블렌드셰이프를 동시에 움직입니다.
+
+name = "샘플 아바타"
+
+[[expressions]]
+source = "Joy"
+target = "笑い"
+renderer = "Body"
+max_weight = 80
+
+[[expressions]]
+source = "Joy"
+target = "目笑い"
+
+[[expressions]]
+source = "Blink"
+target = "まばたき"
+
+[[expressions]]
+source = "A"
+target = "あ"
+max_weight = 70

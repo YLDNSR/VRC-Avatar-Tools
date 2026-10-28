@@ -1,0 +1,126 @@
+{
+  "format": "vav-vrchat-meta",
+  "version": 1,
+  "generator": "hand-written sample (test/vavmeta)",
+  "avatar": "SampleAvatar",
+  "vrm": "SampleAvatar.gltf",
+  "parameters": [
+    { "name": "Hat", "type": "bool", "default": 1, "saved": true, "synced": true },
+    { "name": "Outfit", "type": "int", "default": 0, "saved": true, "synced": true },
+    { "name": "Cheek", "type": "float", "default": 0, "saved": true, "synced": true },
+    { "name": "Ribbon", "type": "bool", "default": 0, "saved": true, "synced": true }
+  ],
+  "localParameters": [
+    { "name": "One", "type": "float", "default": 1 }
+  ],
+  "menu": {
+    "name": "Main Menu",
+    "controls": [
+      { "name": "Hat", "type": "toggle", "parameter": "Hat", "value": 1 },
+      {
+        "name": "Outfit", "type": "subMenu", "value": 1,
+        "menu": {
+          "name": "Outfit Menu",
+          "controls": [
+            { "name": "Outfit A", "type": "toggle", "parameter": "Outfit", "value": 0 },
+            { "name": "Outfit B", "type": "toggle", "parameter": "Outfit", "value": 1 }
+          ]
+        }
+      },
+      { "name": "Cheek", "type": "radialPuppet", "value": 1, "subParameters": ["Cheek"] },
+      { "name": "Ribbon", "type": "toggle", "parameter": "Ribbon", "value": 1 }
+    ]
+  },
+  "gestures": {
+    "left": [
+      null,
+      { "clip": "Smile", "blendShapes": [{ "path": "Body", "shape": "eye_smile", "weight": 1 }], "objects": [{ "path": "FX Heart", "active": true }] },
+      null,
+      { "clip": "Angry", "blendShapes": [{ "path": "Body", "shape": "angry", "weight": 0.8 }], "objects": [] },
+      null, null, null, null
+    ],
+    "right": [
+      null, null,
+      { "clip": "MouthOpen", "blendShapes": [{ "path": "Body", "shape": "mouth_open", "weight": 1 }], "objects": [] },
+      null, null, null, null, null
+    ]
+  },
+  "toggles": [
+    {
+      "layer": "Hat",
+      "states": [
+        { "name": "Off", "default": true, "when": [[{ "parameter": "Hat", "mode": "ifNot" }]], "motion": { "blendShapes": [], "objects": [{ "path": "Hat", "active": false }] } },
+        { "name": "On", "when": [[{ "parameter": "Hat", "mode": "if" }]], "motion": { "blendShapes": [], "objects": [{ "path": "Hat", "active": true }] } }
+      ]
+    },
+    {
+      "layer": "Outfit",
+      "states": [
+        {
+          "name": "A", "default": true, "when": [[{ "parameter": "Outfit", "mode": "equals", "threshold": 0 }]],
+          "motion": {
+            "blendShapes": [{ "path": "Body", "shape": "shrink_feet", "weight": 1 }],
+            "objects": [{ "path": "Outfit/Outfit A", "active": true }, { "path": "Outfit/Outfit B", "active": false }]
+          }
+        },
+        {
+          "name": "B", "when": [[{ "parameter": "Outfit", "mode": "equals", "threshold": 1 }]],
+          "motion": {
+            "blendShapes": [{ "path": "Body", "shape": "shrink_feet", "weight": 0 }],
+            "objects": [{ "path": "Outfit/Outfit A", "active": false }, { "path": "Outfit/Outfit B", "active": true }]
+          }
+        }
+      ]
+    },
+    {
+      "layer": "Cheek (Motion Time)",
+      "states": [
+        {
+          "name": "Cheek", "default": true, "when": [],
+          "motion": {
+            "blend": "Cheek",
+            "children": [
+              { "threshold": 0, "motion": { "blendShapes": [{ "path": "Body", "shape": "cheek", "weight": 0 }], "objects": [] } },
+              { "threshold": 1, "motion": { "blendShapes": [{ "path": "Body", "shape": "cheek", "weight": 1 }], "objects": [] } }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "layer": "Direct Blend Tree",
+      "states": [
+        {
+          "name": "DBT", "default": true, "when": [],
+          "motion": {
+            "direct": [
+              {
+                "parameter": "One",
+                "motion": {
+                  "blend": "Ribbon",
+                  "children": [
+                    { "threshold": 0, "motion": { "blendShapes": [], "objects": [{ "path": "Armature/Hips/Head/Hat", "active": false }] } },
+                    { "threshold": 1, "motion": { "blendShapes": [], "objects": [{ "path": "Armature/Hips/Head/Hat", "active": true }] } }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "defaults": {
+    "objects": [
+      { "path": "Hat", "active": true },
+      { "path": "Outfit/Outfit A", "active": true },
+      { "path": "Outfit/Outfit B", "active": false },
+      { "path": "FX Heart", "active": false },
+      { "path": "Armature/Hips/Head/Hat", "active": true }
+    ],
+    "blendShapes": [
+      { "path": "Body", "shape": "shrink_feet", "weight": 1 }
+    ]
+  },
+  "warnings": []
+}

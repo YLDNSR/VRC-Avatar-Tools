@@ -1,0 +1,42 @@
+{
+    "name": "VRCAvatarTools.Exporter.Editor",
+    "rootNamespace": "VRCAvatarTools.Exporter",
+    "references": [
+        "GUID:e47c917724578cc43b5506c17a27e9a0",
+        "GUID:2ef84b520212e174a94668c7a0862d3b",
+        "GUID:8d76e605759c3f64a957d63ef96ada7c",
+        "GUID:5f875fdc81c40184c8333b9d63c6ddd5",
+        "GUID:b7aa47b240b57de44a4b2021c143c9bf",
+        "GUID:1cd941934d098654fa21a13f28346412",
+        "GUID:3e5d614bc16b50d41bd94c8d7444ca46",
+        "GUID:0aaf403bd13871a44b7127aef2695ff8"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "VRCSDKBase.dll",
+        "VRCSDK3A.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "VAV_UNIVRM10",
+        "VAV_VRCSDK3A"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.vrmc.vrm",
+            "expression": "[0.128.0,0.132.0)",
+            "define": "VAV_UNIVRM10"
+        },
+        {
+            "name": "com.vrchat.avatars",
+            "expression": "3.7.0",
+            "define": "VAV_VRCSDK3A"
+        }
+    ],
+    "noEngineReferences": false
+}
