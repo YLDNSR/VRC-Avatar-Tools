@@ -1,6 +1,7 @@
 node_modules/
 dist/
 release/
+release-beta/
 native/build/
 .DS_Store
 *.log

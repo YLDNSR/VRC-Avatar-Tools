@@ -29,6 +29,10 @@ export const transparentSettings = persisted('settings.transparent', {
   avatarFade: false,
   fadeKey: 'control' as ModKey,
   fadeOpacity: 0.25,
+  /** Remembered desktop character placement (in screen overlay coordinates) and zoom scale */
+  offsetX: null as number | null,
+  offsetY: null as number | null,
+  zoomRatio: null as number | null,
 });
 
 export const LIGHT_PRESETS: Record<Exclude<LightPreset, 'custom'>, { azimuth: number; elevation: number }> = {

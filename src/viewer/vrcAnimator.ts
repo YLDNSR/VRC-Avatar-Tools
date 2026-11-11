@@ -880,6 +880,17 @@ export class VrcAnimator {
   // Frame update
 
   /** Whether the animator needs smooth frames (crossfades, animated states, blending weights). */
+  /** Whether a humanoid animation (dance, AFK, hand gesture, …) posed this bone in the last update. */
+  posesBone(bone: string): boolean {
+    return this.boneBase.has(bone);
+  }
+
+  /** Whether it posed the body, not only the fingers (which the hand gesture layer poses all the time). */
+  posesBody(): boolean {
+    for (const bone of this.boneBase.keys()) if (!/Thumb|Index|Middle|Ring|Little/.test(bone)) return true;
+    return false;
+  }
+
   get busy(): boolean {
     for (const pl of this.playables) {
       if (pl.weight !== pl.weightTarget) return true;

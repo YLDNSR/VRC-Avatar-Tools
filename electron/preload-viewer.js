@@ -24,10 +24,16 @@ function fileUrl(p) {
 
 const allowedEvents = new Set([
   'cursor', 'gesture-key', 'avatar:changed', 'menu:open-avatar', 'menu:open-path', 'win:minimized', 'win:focus', 'syphon:exited',
+  'autocast:chat', 'autocast:chzzk-status',
 ]);
+
+// 'stable' or 'beta' (separate app and settings folder; see electron/main.js).
+const channelArg = process.argv.find((a) => a.startsWith('--vav-channel='));
+const channel = channelArg ? channelArg.slice('--vav-channel='.length) : 'stable';
 
 contextBridge.exposeInMainWorld('vav', {
   platform: process.platform,
+  channel,
   store: {
     all: () => ipcRenderer.sendSync('store:get-all'),
     set: (key, value) => ipcRenderer.send('store:set', key, value),
@@ -52,7 +58,9 @@ contextBridge.exposeInMainWorld('vav', {
   },
   sysInfo: () => ipcRenderer.invoke('sys:info'),
   win: {
-    setTransparent: (opts) => ipcRenderer.send('win:set-transparent', opts),
+    setTransparent: (opts) => ipcRenderer.sendSync('win:set-transparent', opts),
+    setMateMode: (opts) => ipcRenderer.sendSync('win:set-mate-mode', opts),
+    resizeMate: (opts) => ipcRenderer.sendSync('win:resize-mate', opts),
     setIgnoreMouse: (ignore) => ipcRenderer.send('win:set-ignore-mouse', ignore),
     wantCursor: (want) => ipcRenderer.send('win:want-cursor', want),
     moveBy: (dx, dy) => ipcRenderer.send('win:move-by', dx, dy),
@@ -85,6 +93,23 @@ contextBridge.exposeInMainWorld('vav', {
     get: () => ipcRenderer.invoke('login:get'),
     set: (enable) => ipcRenderer.invoke('login:set', enable),
     openSettings: () => ipcRenderer.invoke('login:open-settings'),
+  },
+  // Autonomous broadcast (beta): speech, local LLM, CHZZK chat. Calls answer { ok, value } or { ok: false, error }.
+  autocast: {
+    sayVoices: () => ipcRenderer.invoke('autocast:say-voices'),
+    say: (text, voice, rate) => ipcRenderer.invoke('autocast:say', text, voice, rate),
+    ttsHttp: (url, body) => ipcRenderer.invoke('autocast:tts-http', url, body),
+    llm: (req) => ipcRenderer.invoke('autocast:llm', req),
+    llmCancel: (id) => ipcRenderer.send('autocast:llm-cancel', id),
+    llmModels: (api, url) => ipcRenderer.invoke('autocast:llm-models', api, url),
+    chzzk: {
+      state: () => ipcRenderer.invoke('autocast:chzzk-state'),
+      setClient: (clientId, clientSecret) => ipcRenderer.invoke('autocast:chzzk-set-client', clientId, clientSecret),
+      login: () => ipcRenderer.invoke('autocast:chzzk-login'),
+      logout: () => ipcRenderer.invoke('autocast:chzzk-logout'),
+      connect: () => ipcRenderer.invoke('autocast:chzzk-connect'),
+      disconnect: () => ipcRenderer.invoke('autocast:chzzk-disconnect'),
+    },
   },
   openCapture: () => ipcRenderer.invoke('capture:open'),
   setLanguage: (lang) => ipcRenderer.send('app:set-language', lang),

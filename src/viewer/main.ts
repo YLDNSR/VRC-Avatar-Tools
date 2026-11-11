@@ -12,7 +12,7 @@ import { SyphonOutput } from './syphon';
 import { general, transparentSettings, animation as animSettings, streaming as streamSettings, type ModKey } from './settings';
 import { resolveLang, setLang, t } from '../shared/i18n';
 import { h, icon, toast } from '../shared/dom';
-import type { App } from './app';
+import type { App, AutocastHandle } from './app';
 import type { CursorInfo, ViewerBridge } from '../shared/bridge';
 import { createWelcome } from './ui/welcome';
 import { createFolderBrowser } from './ui/folder';
@@ -28,6 +28,9 @@ import { createStreamingPanel } from './ui/streamingPanel';
 import { createFacePanel } from './ui/facePanel';
 import { createParamsPanel } from './ui/paramsPanel';
 import { createInfoOverlay } from './ui/infoOverlay';
+import { autocastFlag } from './autocast/flag';
+import { mateFlag } from './mate/flag';
+import type { MateModule } from './mate';
 
 const vav = (window as any).vav as ViewerBridge;
 setLang(resolveLang(general.language));
@@ -44,6 +47,8 @@ if (vav.platform === 'win32') {
     h('button', { class: 'win-btn close', title: t('win.close'), onclick: () => vav.win.close() }, '\u2715')));
 }
 document.body.append(canvas, dragBar, uiRoot, loading);
+// The beta app (separate settings) is told apart in window lists, e.g. OBS window capture.
+if (vav.channel === 'beta') document.title = 'VRC Avatar Tools Beta';
 
 const stage = new Stage(canvas);
 const player = new AnimationPlayer();
@@ -58,10 +63,11 @@ const panels = new Map<string, Panel>();
 const app: App = {
   stage, avatar: null, vrc: null, player, gestures, streaming, syphon,
   profiles: [], profileErrors: [], sysInfo: null, fps: 0,
-  transparent: false, view: 'welcome', cameFromFolder: false,
-  loadAvatar, openAvatarDialog, openFolderDialog, rememberAvatarState, startWindowMove, saveLayout, restoreLayout, resetLayout: resetLayoutCmd, setLayoutLocked,
-  showWelcome, showFolder, setTransparent, applyTransparentOptions,
+  transparent: false, mateMode: false, view: 'welcome', cameFromFolder: false,
+  loadAvatar, openAvatarDialog, openFolderDialog, rememberAvatarState, startWindowMove, centerAvatar, saveLayout, restoreLayout, resetLayout: resetLayoutCmd, setLayoutLocked,
+  showWelcome, showFolder, setTransparent, setMateMode, applyTransparentOptions, toggleDesktopMate,
   markActive, rerenderUI, closePanels, togglePanel, reloadProfiles, applyProfile, faceFront,
+  autocast: null, setAutocastEnabled, mate: null, setMateEnabled,
 };
 (window as any).__app = app; // for debugging from DevTools
 
@@ -94,8 +100,73 @@ uiRoot.appendChild(info.el);
 const radial = createRadialMenu(app);
 uiRoot.appendChild(radial.el);
 
-// Window move (radial menu → 창 이동): drag the grip or the avatar; releasing ends it. With a transparent
-// background the bottom toolbar and its move handle are hidden, so this is how the window moves.
+// Desktop character motion and autonomous broadcast (Settings → Labs): the mate module stays loaded so
+// its UI section and Radial Menu entries are always accessible, while switching off stops its motion and
+// takes its pose off the avatar.
+let matePromise: Promise<MateModule> | null = null;
+function loadMate() {
+  matePromise ??= import('./mate').then((m) => m.createMate(app));
+  matePromise.catch(() => { matePromise = null; });
+  return matePromise;
+}
+function unloadMateIfUnused() {
+  if (!app.mate || mateFlag.enabled || app.autocast) return;
+  app.mate.shutdown();
+}
+async function setMateEnabled(on: boolean) {
+  if (mateFlag.enabled !== on) { mateFlag.enabled = on; mateFlag.save(); }
+  if (on) {
+    try {
+      app.mate = await loadMate();
+      markActive();
+    } catch (err) {
+      console.error('[mate]', err);
+      toast(`${t('set.mateFailed')}: ${(err as Error).message || err}`, 6000);
+      mateFlag.enabled = false;
+      mateFlag.save();
+    }
+  } else {
+    unloadMateIfUnused();
+  }
+  rerenderUI();
+}
+
+async function toggleDesktopMate() {
+  await setMateMode(!app.mateMode);
+}
+
+let autocastModule: AutocastHandle | null = null;
+async function setAutocastEnabled(on: boolean) {
+  if (autocastFlag.enabled !== on) { autocastFlag.enabled = on; autocastFlag.save(); }
+  if (on) {
+    try {
+      const mate = await loadMate();
+      app.mate = mate;
+      if (!autocastModule) {
+        const m = await import('./autocast');
+        autocastModule = m.createAutocast(app, mate.life);
+        registerPanel('autocast', autocastModule.panel);
+      }
+      app.autocast = autocastModule;
+    } catch (err) {
+      console.error('[autocast]', err);
+      toast(`${t('set.autocastFailed')}: ${(err as Error).message || err}`, 6000);
+      autocastFlag.enabled = false;
+      autocastFlag.save();
+      unloadMateIfUnused();
+    }
+  } else if (app.autocast) {
+    app.autocast.shutdown();
+    app.autocast = null;
+    panels.get('autocast')?.el.classList.add('hidden');
+    unloadMateIfUnused();
+  }
+  rerenderUI();
+}
+loadMate().then((m) => { app.mate = m; rerenderUI(); }).catch((err) => console.error('[mate]', err));
+if (autocastFlag.enabled) setAutocastEnabled(true);
+
+// Window / avatar move (radial menu → 아바타 이동 / 창 이동): drag the grip or the avatar; releasing ends it.
 const moveGrip = h('div', { class: 'move-grip hidden' }, icon('move', 26), h('span', { class: 'move-grip-label' }, t('radial.moveHint')));
 uiRoot.appendChild(moveGrip);
 let windowMove: { dragging: boolean; x: number; y: number } | null = null;
@@ -143,6 +214,154 @@ window.addEventListener('pointermove', (e) => {
 });
 window.addEventListener('pointerup', () => { if (windowMove?.dragging) endWindowMove(); });
 
+const MATE_ASPECT = 0.65;
+let matePetHeight = 560;
+let mateMaxHeight = 1400;
+let mateResizeTimer: ReturnType<typeof setTimeout> | undefined;
+let radialExpandedWindow = false;
+let studioSnapshot: {
+  rig: any;
+  rot: THREE.Euler;
+  pos: THREE.Vector3;
+  scale: number;
+  transparent: boolean;
+} | null = null;
+
+function syncMateWindowBounds(opts: { anchorX?: number; anchorY?: number; forceRadial?: boolean; restoreOnly?: boolean } = {}) {
+  if (!app.mateMode) return null;
+  clearTimeout(mateResizeTimer);
+  mateResizeTimer = undefined;
+  const anyPanelOpen = [...panels.values()].some((p) => !p.el.classList.contains('hidden'));
+  const radialOpen = opts.forceRadial || radial.isOpen();
+  const petH = Math.round(matePetHeight);
+  const petW = Math.round(matePetHeight * MATE_ASPECT);
+
+  if (anyPanelOpen) {
+    const reqW = Math.max(petW + 390, 740);
+    const reqH = Math.max(petH, 600);
+    const r = vav.win.resizeMate({ width: reqW, height: reqH, petWidth: petW, petHeight: petH, expanded: true });
+    if (r) {
+      mateMaxHeight = Math.max(360, Math.round(r.workArea.height * 1.35));
+      stage.rig.offsetX = r.charOffset.x;
+      stage.rig.offsetY = r.charOffset.y;
+    }
+    stage.resize();
+    stage.rig.apply();
+    return r;
+  }
+
+  if (radialOpen && (petW < 330 || petH < 330)) {
+    const reqW = Math.max(petW, 330);
+    const reqH = Math.max(petH, 330);
+    const r = vav.win.resizeMate({ width: reqW, height: reqH, petWidth: petW, petHeight: petH, expanded: true });
+    if (r) {
+      mateMaxHeight = Math.max(360, Math.round(r.workArea.height * 1.35));
+      stage.rig.offsetX = r.charOffset.x;
+      stage.rig.offsetY = r.charOffset.y;
+    }
+    stage.resize();
+    stage.rig.apply();
+    return r;
+  }
+
+  const r = vav.win.resizeMate({
+    width: petW,
+    height: petH,
+    anchorX: opts.anchorX,
+    anchorY: opts.anchorY,
+    expanded: false,
+    restoreOnly: opts.restoreOnly,
+  });
+  if (r) {
+    mateMaxHeight = Math.max(360, Math.round(r.workArea.height * 1.35));
+    stage.rig.offsetX = 0;
+    stage.rig.offsetY = 0;
+    stage.resize();
+    stage.rig.apply();
+  }
+  return r;
+}
+
+(app as any).beforeRadialOpen = (x: number, y: number) => {
+  if (!app.mateMode) return { x, y };
+  const petW = Math.round(matePetHeight * MATE_ASPECT);
+  const petH = Math.round(matePetHeight);
+  if (window.innerWidth < 330 || window.innerHeight < 330 || petW < 330 || petH < 330) {
+    radialExpandedWindow = true;
+    const prevOffX = stage.rig.offsetX;
+    const prevOffY = stage.rig.offsetY;
+    syncMateWindowBounds({ forceRadial: true });
+    return {
+      x: x + (stage.rig.offsetX - prevOffX),
+      y: y + (stage.rig.offsetY - prevOffY),
+    };
+  }
+  radialExpandedWindow = false;
+  return { x, y };
+};
+
+(app as any).afterRadialClose = () => {
+  if (!app.mateMode || !radialExpandedWindow) return;
+  radialExpandedWindow = false;
+  queueMicrotask(() => {
+    if (app.mateMode && !radial.isOpen()) {
+      syncMateWindowBounds({ restoreOnly: true });
+    }
+  });
+};
+
+function centerAvatar() {
+  if (layoutLocked()) return;
+  stage.rig.offsetX = 0;
+  stage.rig.offsetY = 0;
+  stage.avatarRoot.position.x = 0;
+  stage.avatarRoot.position.z = 0;
+  if (app.mateMode && app.avatar) {
+    stage.rig.frameForMate(app.avatar.restBox);
+  }
+  stage.rig.apply();
+  rerenderUI();
+  markActive();
+}
+
+function clampPanelsToViewport() {
+  for (const p of panels.values()) {
+    if (!p.el.style.left && !p.el.style.top) continue;
+    if (!app.mateMode) {
+      p.el.style.left = '';
+      p.el.style.top = '';
+      p.el.style.right = '';
+      p.el.style.bottom = '';
+      continue;
+    }
+    const r = p.el.getBoundingClientRect();
+    const w = r.width || 300;
+    const h = r.height || 360;
+    const x = Math.min(Math.max(12, parseFloat(p.el.style.left) || 12), Math.max(12, window.innerWidth - w - 12));
+    const y = Math.min(Math.max(36, parseFloat(p.el.style.top) || 36), Math.max(36, window.innerHeight - h - 12));
+    p.el.style.left = `${x}px`;
+    p.el.style.top = `${y}px`;
+  }
+}
+
+function positionPanelNearAvatar(el: HTMLElement) {
+  if (!app.mateMode) return;
+  const ax = window.innerWidth * 0.5 + stage.rig.offsetX;
+  const ay = window.innerHeight * 0.5 + stage.rig.offsetY;
+  const r = el.getBoundingClientRect();
+  const pw = r.width || 320;
+  const ph = r.height || 400;
+  const placeLeft = ax >= window.innerWidth * 0.5;
+  const rawX = placeLeft ? 16 : Math.max(16, window.innerWidth - pw - 16);
+  const rawY = ay - ph * 0.5;
+  const x = Math.min(Math.max(14, rawX), Math.max(14, window.innerWidth - pw - 14));
+  const y = Math.min(Math.max(24, rawY), Math.max(24, window.innerHeight - ph - 14));
+  el.style.left = `${Math.round(x)}px`;
+  el.style.top = `${Math.round(y)}px`;
+  el.style.right = 'auto';
+  el.style.bottom = 'auto';
+}
+
 function setView(v: App['view']) {
   app.view = v;
   if (v !== 'avatar') radial.close();
@@ -155,12 +374,14 @@ function setView(v: App['view']) {
 }
 
 function showWelcome() {
+  if (app.mateMode) setMateMode(false);
   unloadAvatar();
   setView('welcome');
   welcome.refresh();
 }
 
 function showFolder(dir?: string) {
+  if (app.mateMode) setMateMode(false);
   unloadAvatar();
   setView('folder');
   folder.open(dir || general.lastFolder);
@@ -174,6 +395,7 @@ function rerenderUI() {
 
 function closePanels(except?: string) {
   for (const [id, p] of panels) if (id !== except) p.el.classList.add('hidden');
+  if (app.mateMode && !except) syncMateWindowBounds({ restoreOnly: true });
   toolbar.refresh();
 }
 
@@ -188,10 +410,13 @@ function togglePanel(id: string) {
       if (pid !== id && pid !== keep && !(id === 'params')) other.el.classList.add('hidden');
     }
     p.el.classList.remove('hidden');
+    if (app.mateMode) syncMateWindowBounds();
     p.onShow?.();
     p.refresh();
+    positionPanelNearAvatar(p.el);
   } else {
     p.el.classList.add('hidden');
+    if (app.mateMode) syncMateWindowBounds({ restoreOnly: true });
   }
   toolbar.refresh();
 }
@@ -282,16 +507,22 @@ async function loadAvatar(path: string, opts: { keepCamera?: boolean } = {}) {
     stage.avatarRoot.scale.setScalar(1);
     const box = avatar.restBox.clone();
     stage.standBaseRadius = Math.min(0.6, Math.max(0.25, avatar.height() * 0.21));
-    stage.rig.frame(box);
-    if (snapshot && rootState) {
-      stage.rig.restore(snapshot);
-      stage.avatarRoot.rotation.copy(rootState.rot);
-      stage.avatarRoot.position.copy(rootState.pos);
-      stage.avatarRoot.scale.setScalar(rootState.scale);
+    if (app.mateMode && !snapshot) {
+      stage.rig.frameForMate(box);
+      stage.rig.frameHeight = matePetHeight;
+      stage.rig.apply();
     } else {
-      // The avatar's saved position / scale / rotation and camera view.
-      const saved = layoutSettings.byAvatar[layoutKey(path)];
-      if (saved && layoutSettings.autoRestore) applyLayout(stage, saved);
+      stage.rig.frame(box);
+      if (snapshot && rootState) {
+        stage.rig.restore(snapshot);
+        stage.avatarRoot.rotation.copy(rootState.rot);
+        stage.avatarRoot.position.copy(rootState.pos);
+        stage.avatarRoot.scale.setScalar(rootState.scale);
+      } else {
+        // The avatar's saved position / scale / rotation and camera view.
+        const saved = layoutSettings.byAvatar[layoutKey(path)];
+        if (saved && layoutSettings.autoRestore) applyLayout(stage, saved);
+      }
     }
     vav.watchAvatar(path);
     rememberRecent(path, avatar);
@@ -474,6 +705,18 @@ function restoreLayout(): boolean {
 
 function resetLayoutCmd() {
   if (layoutLocked()) return;
+  if (app.mateMode && app.avatar) {
+    stage.avatarRoot.position.set(0, 0, 0);
+    stage.avatarRoot.rotation.set(0, 0, 0);
+    stage.avatarRoot.scale.setScalar(1);
+    stage.rig.frameForMate(app.avatar.restBox);
+    matePetHeight = Math.min(560, mateMaxHeight);
+    stage.rig.frameHeight = matePetHeight;
+    syncMateWindowBounds();
+    rerenderUI();
+    markActive();
+    return;
+  }
   resetLayout(stage);
   rerenderUI();
   markActive();
@@ -488,9 +731,18 @@ function setLayoutLocked(v: boolean) {
 }
 
 // ---------------------------------------------------------------------------
-// Transparent mode, click-through, avatar see-through
+// Transparent mode, Desktop Mate mode, click-through, avatar see-through
 
 function applyTransparentOptions() {
+  if (app.mateMode) {
+    vav.win.setMateMode({
+      mateMode: true,
+      alwaysOnTop: transparentSettings.alwaysOnTop,
+      clickThrough: transparentSettings.clickThrough,
+    });
+    updateCursorWanted();
+    return;
+  }
   vav.win.setTransparent({
     transparent: app.transparent,
     alwaysOnTop: transparentSettings.alwaysOnTop,
@@ -500,18 +752,103 @@ function applyTransparentOptions() {
 }
 
 function setTransparent(on: boolean) {
+  if (app.mateMode && !on) {
+    setMateMode(false);
+    return;
+  }
   app.transparent = on;
-  if (general.lastTransparent !== on) { general.lastTransparent = on; general.save(); }
   stage.setTransparent(on);
   applyTransparentOptions();
-  if (!on) { canvas.style.opacity = '1'; vav.win.setIgnoreMouse(false); }
-  else toast(t('toast.transparentOn', { key: t(`key.${transparentSettings.releaseKey}`) }), 3500);
+  if (!on) {
+    ignoring = false;
+    canvas.style.opacity = '1';
+    vav.win.setIgnoreMouse(false);
+  } else {
+    hitTest();
+    updateClickThrough();
+    toast(t('toast.transparentOn', { key: t(`key.${transparentSettings.releaseKey}`) }), 3500);
+  }
+  rerenderUI();
+  markActive();
+}
+
+async function setMateMode(on: boolean) {
+  if (app.mateMode === on) return;
+  if (on) {
+    if (!mateFlag.enabled) await setMateEnabled(true);
+    radial.close();
+    closePanels();
+    studioSnapshot = {
+      rig: stage.rig.snapshot(),
+      rot: stage.avatarRoot.rotation.clone(),
+      pos: stage.avatarRoot.position.clone(),
+      scale: stage.avatarRoot.scale.x,
+      transparent: app.transparent && !app.mateMode,
+    };
+    const tr = vav.win.setMateMode({
+      mateMode: true,
+      alwaysOnTop: transparentSettings.alwaysOnTop,
+      clickThrough: transparentSettings.clickThrough,
+    });
+    app.mateMode = true;
+    app.transparent = true;
+    if (general.lastTransparent !== true) { general.lastTransparent = true; general.save(); }
+    mateMaxHeight = tr ? Math.max(360, Math.round(tr.workArea.height * 1.35)) : 1400;
+    matePetHeight = tr ? tr.to.height : 560;
+    stage.setMateMode(true);
+    stage.rig.frameHeight = matePetHeight;
+    if (app.avatar) {
+      stage.avatarRoot.position.set(0, 0, 0);
+      stage.rig.frameForMate(app.avatar.restBox);
+    }
+    stage.resize();
+    stage.rig.apply();
+    updateCursorWanted();
+    hitTest();
+    updateClickThrough();
+    if (app.mate) toast(app.mate.controlsHint(), 4500);
+  } else {
+    clearTimeout(mateResizeTimer);
+    mateResizeTimer = undefined;
+    radial.close();
+    for (const p of panels.values()) p.el.classList.add('hidden');
+    vav.win.setMateMode({ mateMode: false });
+    app.mateMode = false;
+    stage.rig.frameHeight = null;
+    stage.rig.offsetX = 0;
+    stage.rig.offsetY = 0;
+    if (studioSnapshot) {
+      stage.rig.restore(studioSnapshot.rig);
+      stage.avatarRoot.rotation.copy(studioSnapshot.rot);
+      stage.avatarRoot.position.copy(studioSnapshot.pos);
+      stage.avatarRoot.scale.setScalar(studioSnapshot.scale);
+      app.transparent = studioSnapshot.transparent;
+      studioSnapshot = null;
+    } else {
+      app.transparent = false;
+      if (app.avatar) stage.rig.frame(app.avatar.restBox);
+    }
+    if (general.lastTransparent !== false) { general.lastTransparent = false; general.save(); }
+    stage.setMateMode(false);
+    stage.setTransparent(app.transparent);
+    if (app.transparent) {
+      applyTransparentOptions();
+    } else {
+      ignoring = false;
+      canvas.style.opacity = '1';
+      vav.win.setIgnoreMouse(false);
+      updateCursorWanted();
+    }
+    stage.resize();
+    stage.rig.apply();
+    clampPanelsToViewport();
+  }
   rerenderUI();
   markActive();
 }
 
 function updateCursorWanted() {
-  vav.win.wantCursor(general.cursorGaze || (app.transparent && (transparentSettings.clickThrough || transparentSettings.avatarFade)));
+  vav.win.wantCursor(general.cursorGaze || app.transparent || app.mateMode);
 }
 (app as any).updateCursorWanted = updateCursorWanted;
 
@@ -521,12 +858,17 @@ let lastHitTest = 0;
 let ignoring = false;
 
 vav.on('cursor', (c: CursorInfo) => {
+  const moved = c.x !== cursor.x || c.y !== cursor.y;
   cursor.polled = true;
   cursor.x = c.x;
   cursor.y = c.y;
   cursor.inside = c.x >= 0 && c.y >= 0 && c.x < c.width && c.y < c.height;
   cursor.mods = c.modifiers || {};
-  updateClickThrough();
+  if ((app.transparent || app.mateMode) && moved && performance.now() - lastHitTest > 40) {
+    tick();
+  } else {
+    updateClickThrough();
+  }
 });
 
 function modHeld(key: ModKey) {
@@ -538,15 +880,27 @@ function overUI(x: number, y: number) {
   return !!el && el !== canvas && el !== document.body && !el.closest('#loading') && !!el.closest('#ui > *:not(.hidden), #drag-bar');
 }
 
+function nearAvatar(x: number, y: number) {
+  const ax = window.innerWidth * 0.5 + stage.rig.offsetX;
+  const ay = window.innerHeight * 0.5 + stage.rig.offsetY;
+  const halfW = app.mateMode ? Math.round(matePetHeight * MATE_ASPECT * 0.5) : window.innerWidth * 0.45;
+  const halfH = app.mateMode ? Math.round(matePetHeight * 0.5) : window.innerHeight * 0.48;
+  return Math.abs(x - ax) <= halfW && Math.abs(y - ay) <= halfH;
+}
+
 function updateClickThrough() {
-  if (!app.transparent) return;
+  if (!app.transparent && !app.mateMode) return;
   const release = modHeld(transparentSettings.releaseKey);
   // The bottom toolbar is hidden with a transparent background (right-click the avatar for the menu).
   toolbar.setHover(false);
-  let ignore = false;
-  if (transparentSettings.clickThrough && cursor.inside) {
-    ignore = !(release || hitAvatar || overUI(cursor.x, cursor.y) || windowMove);
-  }
+  const activeInteraction = !!(windowMove || drag || radial.isOpen());
+  const interactive = activeInteraction || (cursor.inside && (
+    release ||
+    hitAvatar ||
+    overUI(cursor.x, cursor.y) ||
+    (!transparentSettings.clickThrough && nearAvatar(cursor.x, cursor.y))
+  ));
+  const ignore = !interactive;
   if (ignore !== ignoring) {
     ignoring = ignore;
     vav.win.setIgnoreMouse(ignore);
@@ -560,15 +914,29 @@ function updateClickThrough() {
   }
 }
 
-const pixel = new Uint8Array(4);
+const HIT_RADIUS = 3;
+const HIT_SIDE = HIT_RADIUS * 2 + 1;
+const pixelPatch = new Uint8Array(HIT_SIDE * HIT_SIDE * 4);
 function hitTest() {
-  if (!app.transparent || !cursor.inside) { hitAvatar = false; return; }
+  if ((!app.transparent && !app.mateMode) || !cursor.inside) { hitAvatar = false; return; }
   const gl = stage.renderer.getContext();
   const dpr = stage.renderer.getPixelRatio();
-  const x = Math.floor(cursor.x * dpr);
-  const y = Math.floor((window.innerHeight - cursor.y) * dpr);
-  gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-  hitAvatar = pixel[3] > 20;
+  const cx = Math.floor(cursor.x * dpr);
+  const cy = Math.floor((window.innerHeight - cursor.y) * dpr);
+  const maxW = gl.drawingBufferWidth;
+  const maxH = gl.drawingBufferHeight;
+  const x0 = Math.max(0, Math.min(maxW - HIT_SIDE, cx - HIT_RADIUS));
+  const y0 = Math.max(0, Math.min(maxH - HIT_SIDE, cy - HIT_RADIUS));
+  const w = Math.min(HIT_SIDE, maxW - x0);
+  const h = Math.min(HIT_SIDE, maxH - y0);
+  if (w <= 0 || h <= 0) { hitAvatar = false; return; }
+  gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixelPatch);
+  let hit = false;
+  const count = w * h * 4;
+  for (let i = 3; i < count; i += 4) {
+    if (pixelPatch[i] > 20) { hit = true; break; }
+  }
+  hitAvatar = hit;
 }
 
 // ---------------------------------------------------------------------------
@@ -576,12 +944,26 @@ function hitTest() {
 
 // A right click (no drag) opens the radial menu; dragging rotates / moves as before. With the layout
 // locked the menu still opens and only an actual drag shows the lock reminder.
-let drag: { button: number; x: number; y: number; sx: number; sy: number; moved: boolean; locked: boolean } | null = null;
+// Desktop character controls (its switch on, by default with a transparent background): a left click makes the
+// avatar react, a left drag moves the avatar (or Option/Alt + left drag rotates), scrolling over the avatar zooms at the pointer.
+let drag: {
+  button: number; x: number; y: number; sx: number; sy: number; moved: boolean; locked: boolean;
+  /** desktop character controls: screen position for moving the avatar / window */
+  mate: boolean; scrX: number; scrY: number;
+} | null = null;
+
+function mateControls() {
+  return app.mateMode || !!app.mate?.controls(app.transparent);
+}
+
 canvas.addEventListener('pointerdown', (e) => {
   if (app.view !== 'avatar') return;
   if (windowMove) { beginWindowDrag(e, canvas); return; }
   if (radial.isOpen() && e.button !== 2) { radial.close(); return; }
-  drag = { button: e.button, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false, locked: layoutSettings.locked };
+  drag = {
+    button: e.button, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false, locked: layoutSettings.locked,
+    mate: mateControls(), scrX: e.screenX, scrY: e.screenY,
+  };
   try { canvas.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
   markActive();
 });
@@ -598,15 +980,28 @@ canvas.addEventListener('pointermove', (e) => {
   const dy = e.clientY - drag.y;
   drag.x = e.clientX;
   drag.y = e.clientY;
+  const sdx = e.screenX - drag.scrX;
+  const sdy = e.screenY - drag.scrY;
+  drag.scrX = e.screenX;
+  drag.scrY = e.screenY;
+  if (drag.button === 0 && drag.mate && !e.altKey) {
+    if (sdx || sdy) vav.win.moveBy(sdx, sdy);
+    markActive();
+    return;
+  }
   if (drag.button === 0) {
     stage.avatarRoot.rotation.y += dx * 0.01;
     stage.rig.pitch = THREE.MathUtils.clamp(stage.rig.pitch + dy * 0.005, -1.2, 1.35);
   } else if (drag.button === 2 || drag.button === 1) {
-    const k = stage.rig.worldPerPixel(window.innerHeight);
-    const cam = stage.rig.camera;
-    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
-    const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
-    stage.avatarRoot.position.addScaledVector(right, dx * k).addScaledVector(up, -dy * k);
+    if (app.mateMode) {
+      if (sdx || sdy) vav.win.moveBy(sdx, sdy);
+    } else {
+      const k = stage.rig.worldPerPixel(window.innerHeight);
+      const cam = stage.rig.camera;
+      const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
+      const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
+      stage.avatarRoot.position.addScaledVector(right, dx * k).addScaledVector(up, -dy * k);
+    }
   }
   markActive();
 });
@@ -615,15 +1010,60 @@ canvas.addEventListener('pointerup', (e) => {
   drag = null;
   if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
   if (d && d.button === 2 && !d.moved && app.avatar) radial.open(e.clientX, e.clientY);
+  if (d && d.button === 0 && !d.moved && (d.mate || (app.mate && mateFlag.enabled)) && app.avatar) {
+    app.mate?.poke(e.clientX, e.clientY, (app.transparent || app.mateMode) ? hitAvatar : true);
+  }
+  updateClickThrough();
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
-  if (app.view !== 'avatar' || layoutLocked()) return;
-  stage.rig.distance = THREE.MathUtils.clamp(stage.rig.distance * Math.exp(e.deltaY * 0.0012), 0.15, 30);
+  if (app.view !== 'avatar') return;
+  const mateZoom = mateControls();
+  // In transparent click-through mode, only zoom while hovering the avatar (unless the release key is held).
+  if ((app.transparent || app.mateMode) && transparentSettings.clickThrough && !modHeld(transparentSettings.releaseKey) && !hitAvatar) return;
+  if (layoutLocked()) return;
+  const factor = Math.exp(e.deltaY * 0.0012);
+  if (mateZoom) zoomAt(e.clientX, e.clientY, factor);
+  else stage.rig.distance = THREE.MathUtils.clamp(stage.rig.distance * factor, 0.15, 30);
   markActive();
 }, { passive: false });
-canvas.addEventListener('dblclick', () => resetView());
+// A double click resets the view, but not with the desktop character controls (clicks there are pokes).
+canvas.addEventListener('dblclick', () => { if (!mateControls() && !(app.mate && mateFlag.enabled)) resetView(); });
+
+/** Zooms keeping the point under the pointer where it is. */
+const zoomRay = new THREE.Raycaster();
+const zoomPlane = new THREE.Plane();
+function pointOnTargetPlane(x: number, y: number) {
+  const cam = stage.rig.camera;
+  zoomRay.setFromCamera(new THREE.Vector2((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1), cam);
+  zoomPlane.setFromNormalAndCoplanarPoint(cam.getWorldDirection(new THREE.Vector3()).negate(), stage.rig.target);
+  return zoomRay.ray.intersectPlane(zoomPlane, new THREE.Vector3());
+}
+function zoomAt(x: number, y: number, factor: number) {
+  if (app.mateMode) {
+    const ax = THREE.MathUtils.clamp(x / Math.max(1, window.innerWidth), 0.15, 0.85);
+    const ay = THREE.MathUtils.clamp(y / Math.max(1, window.innerHeight), 0.15, 0.9);
+    matePetHeight = THREE.MathUtils.clamp(matePetHeight / factor, 220, mateMaxHeight);
+    stage.rig.frameHeight = matePetHeight;
+    stage.rig.applyProjectionOffset();
+    const petW = Math.round(matePetHeight * MATE_ASPECT);
+    if (matePetHeight > window.innerHeight - 6 || petW > window.innerWidth - 6 || Math.abs(matePetHeight - window.innerHeight) > 72) {
+      syncMateWindowBounds({ anchorX: ax, anchorY: ay });
+    } else {
+      clearTimeout(mateResizeTimer);
+      mateResizeTimer = setTimeout(() => syncMateWindowBounds({ anchorX: ax, anchorY: ay }), 140);
+    }
+    return;
+  }
+  const rig = stage.rig;
+  rig.apply();
+  const before = pointOnTargetPlane(x, y);
+  rig.distance = THREE.MathUtils.clamp(rig.distance * factor, 0.15, 30);
+  rig.apply();
+  const after = pointOnTargetPlane(x, y);
+  if (before && after) { rig.target.add(before.sub(after)); rig.apply(); }
+}
 
 function resetView() {
   resetLayoutCmd();
@@ -743,7 +1183,11 @@ vav.on('win:minimized', (m: boolean) => { minimized = m; markActive(); });
 // Clicking another app (e.g. through the transparent background) closes the radial menu.
 vav.on('win:focus', (focused: boolean) => { if (!focused) radial.close(); });
 
-window.addEventListener('resize', () => { stage.resize(); markActive(); });
+window.addEventListener('resize', () => {
+  stage.resize();
+  clampPanelsToViewport();
+  markActive();
+});
 
 // ---------------------------------------------------------------------------
 // Cursor gaze
@@ -814,6 +1258,7 @@ function isActive(now: number) {
   if (app.avatar && app.avatar.springMotion() > 0.00015) return true;
   if (general.lowFps === 'shader' && app.avatar?.hasAnimatedShader) return true;
   if (app.vrc instanceof VrcAnimator && app.vrc.busy) return true;
+  if (app.autocast?.busy()) return true;
   return false;
 }
 
@@ -821,7 +1266,8 @@ function tick() {
   const now = performance.now();
   let interval = 0;
   if (minimized || document.hidden) interval = 1000;
-  else if (!isActive(now)) interval = 200;
+  // The desktop character motion keeps going at 30 fps when nothing else needs the full rate.
+  else if (!isActive(now)) interval = app.mate?.busy() ? 33 : 200;
   if (now - lastRender < interval - 1) return;
   lastRender = now;
   const dt = Math.min(0.1, (now - last) / 1000);
@@ -829,12 +1275,15 @@ function tick() {
 
   const a = app.avatar;
   if (a && app.view === 'avatar') {
+    app.mate?.beginFrame();
     player.update(dt);
     streaming.update(dt);
     gestures.update(a, dt, streaming.fingersTracked);
     updateGaze(dt);
     // VRChat avatar animator (sidecar v2): FX toggles, Action layer dances / AFK, Gesture-layer hands.
     if (app.vrc instanceof VrcAnimator) app.vrc.update(dt, { fingersTracked: streaming.fingersTracked });
+    app.autocast?.update(dt);
+    app.mate?.update(dt);
     stage.avatarOffset.position.y = player.active ? animSettings.yOffset : 0;
     a.update(dt);
     const foot = a.footY(stage.avatarRoot);
@@ -849,7 +1298,7 @@ function tick() {
   stage.rig.apply();
   if (now - layoutSyncAt > 100 && !layoutPanel.el.classList.contains('hidden')) { layoutSyncAt = now; layoutPanel.sync(); }
   stage.render();
-  if (app.transparent && now - lastHitTest > 50) {
+  if ((app.transparent || app.mateMode) && now - lastHitTest > 50) {
     lastHitTest = now;
     hitTest();
     updateClickThrough();
@@ -890,13 +1339,15 @@ setInterval(() => { if (document.hidden || minimized) tick(); }, 1000);
   else showWelcome();
 })();
 
-/** "Start with the last state": the last avatar, in transparent mode if it was on. */
+/** "Start with the last state": the last avatar, in Desktop Mate mode if it was on. */
 async function openLastState(): Promise<boolean> {
   const last = general.recent[0]?.path;
   if (!last || !(await vav.fs.exists(last))) return false;
   app.cameFromFolder = false;
   await loadAvatar(last);
   if (!app.avatar) return false;
-  if (general.lastTransparent) setTransparent(true);
+  if (general.lastTransparent) {
+    await setMateMode(true);
+  }
   return true;
 }

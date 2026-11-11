@@ -10,7 +10,16 @@ export interface Layout {
   /** Avatar root rotation (degrees, Euler XYZ) */
   rot: [number, number, number];
   scale: number;
-  camera: { target: number[]; distance: number; yaw: number; pitch: number; fov: number };
+  camera: {
+    target: number[];
+    distance: number;
+    yaw: number;
+    pitch: number;
+    fov: number;
+    offsetX?: number;
+    offsetY?: number;
+    viewHeight?: number;
+  };
   savedAt: string;
 }
 
@@ -51,7 +60,16 @@ export function captureLayout(stage: Stage): Layout {
     pos: [r.position.x, r.position.y, r.position.z],
     rot: [deg(r.rotation.x), deg(r.rotation.y), deg(r.rotation.z)],
     scale: r.scale.x,
-    camera: { target: s.target, distance: s.distance, yaw: s.yaw, pitch: s.pitch, fov: s.fov },
+    camera: {
+      target: s.target,
+      distance: s.distance,
+      yaw: s.yaw,
+      pitch: s.pitch,
+      fov: s.fov,
+      offsetX: s.offsetX,
+      offsetY: s.offsetY,
+      viewHeight: s.viewHeight,
+    },
     savedAt: new Date().toISOString(),
   };
 }
@@ -70,6 +88,16 @@ export function applyLayout(stage: Stage, l: Layout) {
     streaming.save();
   }
   stage.rig.restore(l.camera);
+  const vh = l.camera.viewHeight;
+  if (vh && vh > 0 && window.innerHeight > 0) {
+    const ratio = window.innerHeight / vh;
+    stage.rig.distance = THREE.MathUtils.clamp(l.camera.distance * ratio, 0.15, 30);
+  }
+  if (!stage.transparent) {
+    stage.rig.offsetX = 0;
+    stage.rig.offsetY = 0;
+  }
+  stage.rig.applyProjectionOffset();
 }
 
 /** Avatar at the origin, facing forward, scale 1, camera framing the whole body (the field of view is kept). */

@@ -17,7 +17,9 @@
     "test:vavmeta": "vite build && node scripts/test-vavmeta.js",
     "dist": "npm run build:native && vite build && electron-builder --mac",
     "dist:mac": "npm run build:native && vite build && electron-builder --mac",
-    "dist:win": "vite build && node scripts/dist-win.js"
+    "dist:win": "vite build && node scripts/dist-win.js",
+    "dist:beta": "npm run build:native && vite build && node scripts/dist-beta.js",
+    "start:beta": "vite build && VAV_CHANNEL=beta electron ."
   },
   "dependencies": {
     "smol-toml": "^1.9.1"

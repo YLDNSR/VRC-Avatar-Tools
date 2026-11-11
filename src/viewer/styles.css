@@ -252,3 +252,39 @@ button.param-row.vrc-submenu { width: 100%; background: transparent; border: non
 button.param-row.vrc-submenu:hover { background: color-mix(in srgb, var(--panel-border) 60%, transparent); }
 .vrc-submenu .chevron { color: var(--muted); font-size: 16px; padding-right: 4px; }
 .avatar-anims { margin-top: 8px; }
+
+/* Autonomous broadcast (beta) */
+.autocast-panel { width: 380px; }
+.autocast-panel .segmented .seg { padding: 5px 4px; }
+.cast-start { width: 100%; padding: 9px; font-size: 14px; margin: 4px 0 6px; }
+.cast-status { color: var(--muted); font-size: 12px; margin: 4px 0; line-height: 1.5; }
+.cast-hint { margin: 4px 0 6px; line-height: 1.45; }
+.cast-log { height: 220px; overflow-y: auto; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--panel-border); border-radius: 8px; padding: 6px 8px; margin: 6px 0; font-size: 12.5px; user-select: text; }
+.cast-line { padding: 2px 0; line-height: 1.45; word-break: break-word; }
+.cast-line .who { color: var(--muted); margin-right: 6px; font-weight: 600; }
+.cast-line.speech .who, .cast-line.idle .who { color: var(--accent); }
+.cast-line.operator .who { color: var(--ok); }
+.cast-line.info { color: var(--muted); font-style: italic; }
+.cast-line.error { color: #ff9aa5; }
+.cast-line.skipped { opacity: 0.45; }
+.cast-say { display: flex; gap: 6px; align-items: stretch; }
+.cast-say textarea { flex: 1; }
+.cast-textarea, .autocast-panel input[type=text], .autocast-panel input[type=password] { width: 100%; box-sizing: border-box; background: rgba(0, 0, 0, 0.3); color: var(--text); border: 1px solid var(--panel-border); border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12.5px; resize: vertical; margin: 2px 0; }
+.autocast-panel .input-row input[type=text] { width: auto; flex: 1; min-width: 0; }
+.cast-test { margin-top: 8px; }
+.cast-test summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.cast-test-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+.cast-test-row input[type=text] { flex: 1; min-width: 0; }
+.cast-test-row .cast-test-nick { flex: 0 0 110px; }
+.cast-copy { display: flex; gap: 6px; align-items: center; }
+.cast-copy input { flex: 1; min-width: 0; }
+.disabled-box { opacity: 0.5; }
+.cast-gestures { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.cast-gestures .btn { flex: 1 0 auto; padding: 4px 8px; }
+
+/* Desktop character (beta) section in the Animation panel */
+.mate-section .mate-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0; }
+.mate-section .mate-row .segmented { flex: 0 1 auto; }
+.mate-section .section-subtitle { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
+.mate-details { margin: 4px 0; }
+.mate-details summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 2px 0; }

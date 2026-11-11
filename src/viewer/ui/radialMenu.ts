@@ -139,9 +139,15 @@ export function createRadialMenu(app: App) {
   function appItems(): Item[] {
     const panel = (id: string) => () => { close(); app.togglePanel(id); };
     return [
-      // The bottom toolbar (and its move handle) is hidden in transparent mode; the window moves from here.
+      // The bottom toolbar (and its move handle) is hidden in transparent mode; the window / character moves from here.
       { label: t('radial.moveWindow'), iconName: 'move', onClick: () => { const { x, y } = at; close(); app.startWindowMove(x, y); } },
-      { label: t('radial.transparent'), iconName: 'transparent', active: () => app.transparent, onClick: () => { app.setTransparent(!app.transparent); render(); } },
+      { label: t('radial.centerAvatar'), iconName: 'center', onClick: () => { close(); app.centerAvatar(); } },
+      app.mateMode
+        ? { label: t('radial.exitTransparent'), iconName: 'mate', active: () => true, onClick: () => { close(); app.setMateMode(false); } }
+        : { label: t('tb.mate'), iconName: 'mate', active: () => false, onClick: () => { close(); app.setMateMode(true); } },
+      ...(!app.mateMode ? [
+        { label: t('radial.transparent'), iconName: 'transparent', active: () => app.transparent, onClick: () => { close(); app.setTransparent(!app.transparent); } },
+      ] : []),
       {
         label: t('tb.lock'), iconName: layoutSettings.locked ? 'lock' : 'unlock', active: () => layoutSettings.locked,
         onClick: () => { app.setLayoutLocked(!layoutSettings.locked); render(); },
@@ -151,6 +157,7 @@ export function createRadialMenu(app: App) {
       { label: t('tb.animation'), iconName: 'film', onClick: panel('animation') },
       { label: t('set.layout'), iconName: 'resize', onClick: panel('layout') },
       { label: t('tb.settings'), iconName: 'settings', onClick: panel('settings') },
+      ...(app.autocast ? [{ label: t('tb.autocast'), iconName: 'mic', active: () => !!app.autocast?.live(), onClick: panel('autocast') }] : []),
       // Quits directly, also from a transparent background (no need to turn it off and close the window).
       { label: t('radial.quit'), iconName: 'power', danger: true, onClick: () => { close(); vav.quit(); } },
     ];
@@ -163,8 +170,25 @@ export function createRadialMenu(app: App) {
       label: t('radial.app'), iconName: 'settings',
       onClick: () => { stack.push({ title: t('radial.app'), items: appItems }); render(); },
     };
+    const exitTransparent: Item | null = (app.mateMode || app.transparent) && items.length ? {
+      label: t('radial.exitTransparent'), iconName: app.mateMode ? 'mate' : 'transparent',
+      onClick: () => { close(); if (app.mateMode) app.setMateMode(false); else app.setTransparent(false); },
+    } : null;
+    // Desktop character: things the avatar can do now, standing stances, and its switch.
+    const mate = app.mate;
+    const mateEntry: Item | null = mate ? {
+      label: t('radial.mate'), iconName: 'user',
+      onClick: () => {
+        stack.push({
+          title: t('radial.mate'),
+          items: () => mate.menu().map((m) => ({ label: m.label, active: m.active, onClick: () => { m.run(); if (m.active) render(); else close(); } })),
+        });
+        render();
+      },
+    } : null;
+    const extra = [...(mateEntry ? [mateEntry] : []), ...(exitTransparent ? [exitTransparent] : [])];
     // Without an avatar menu the app actions are the whole menu.
-    return items.length ? [...items, appEntry] : appItems();
+    return items.length ? [...items, ...extra, appEntry] : [...extra, ...appItems()];
   }
 
   // -------------------------------------------------------------------------
@@ -386,9 +410,11 @@ export function createRadialMenu(app: App) {
   el.addEventListener('contextmenu', (e) => { e.preventDefault(); back(); });
 
   function open(x: number, y: number) {
+    const adjusted = (app as any).beforeRadialOpen?.(x, y) as { x: number; y: number } | undefined;
+    if (adjusted) { x = adjusted.x; y = adjusted.y; }
     const w = window.innerWidth, hgt = window.innerHeight;
     // Fit the ring into small (transparent) windows.
-    outer = Math.max(80, Math.min(140, Math.min(w, hgt) / 2 - 12));
+    outer = Math.max(96, Math.min(140, Math.min(w, hgt) / 2 - 12));
     inner = Math.round(outer * 0.33);
     size = outer * 2 + 4;
     const cx = Math.min(Math.max(x, size / 2 + 4), w - size / 2 - 4);
@@ -420,6 +446,7 @@ export function createRadialMenu(app: App) {
     if (held) { held.onUp?.(); held = null; }
     el.classList.add('hidden');
     clearDrawing();
+    (app as any).afterRadialClose?.();
     app.markActive();
   }
 
