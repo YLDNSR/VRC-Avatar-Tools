@@ -4,6 +4,7 @@ import { h, toggle, select, slider, toast } from '../../shared/dom';
 import { t, LANGS } from '../../shared/i18n';
 import { general, transparentSettings, type LowFpsMode, type ModKey } from '../settings';
 import { avatarStates } from '../avatarState';
+import { mateFlag } from '../mate/flag';
 import { panelShell, section, button } from './common';
 import type { ViewerBridge, LoginItemState } from '../../shared/bridge';
 
@@ -93,6 +94,20 @@ export function createSettingsPanel(app: App) {
     loginNote.classList.toggle('hidden', !loginNote.textContent);
   }
 
+  // Labs: features still being tried out (off by default in the stable app).
+  const mateToggle = toggle(t('set.mate'), mateFlag.enabled, async (v) => {
+    mateToggle.setDisabled(true);
+    await app.setMateEnabled(v);
+    mateToggle.setDisabled(false);
+    mateToggle.set(mateFlag.enabled);
+  }, t('set.mateHint'));
+  const autocastToggle = toggle(t('set.autocast'), !!app.autocast, async (v) => {
+    autocastToggle.setDisabled(true);
+    await app.setAutocastEnabled(v);
+    autocastToggle.setDisabled(false);
+    autocastToggle.set(!!app.autocast);
+    if (app.autocast) toast(t('set.autocastOn'), 5000);
+  }, t('set.autocastHint'));
   const infoToggle = toggle(t('set.info'), general.infoOverlay, (v) => { general.infoOverlay = v; general.save(); app.rerenderUI(); });
   const paramsBtn = button(t('set.exprParams'), () => app.togglePanel('params'));
 
@@ -111,6 +126,7 @@ export function createSettingsPanel(app: App) {
     pixelRatio.el,
     section(t('set.transparentGroup'), onTop.el, clickThrough.el, releaseKey.el, avatarFade.el, fadeKey.el, fadeOpacity.el),
     section(t('set.startupGroup'), autoLaunch.el, loginNote, openLast.el, remember.el),
+    section(t('set.labsGroup'), mateToggle.el, autocastToggle.el),
     lang.el,
     infoToggle.el,
     button(t('set.openCapture'), () => vav.openCapture(), 'ghost'),
@@ -124,6 +140,8 @@ export function createSettingsPanel(app: App) {
     infoToggle.set(general.infoOverlay);
     openLast.set(general.openLast);
     remember.set(avatarStates.enabled);
+    autocastToggle.set(!!app.autocast);
+    mateToggle.set(mateFlag.enabled);
     // System Settings can change the login item too, so ask every time the menu opens.
     vav.login.get().then(showLogin).catch(() => showLogin({ supported: false, openAtLogin: false, status: 'unsupported' }));
     avatarFade.setDisabled(!app.transparent);

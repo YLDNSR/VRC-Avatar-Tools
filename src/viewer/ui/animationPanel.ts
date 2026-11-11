@@ -27,6 +27,8 @@ export function createAnimationPanel(app: App) {
   const note = h('div', { class: 'muted small' }, t('anim.dropHint'));
   // Animations built into a VRChat avatar (sidecar v2): dances, AFK, idle … plus VRChat's AFK state.
   const avatarBox = h('div', { class: 'avatar-anims' });
+  // Desktop character motion (beta): its own section while its switch or the broadcast is on.
+  const mateBox = h('div', { class: 'mate-box' });
 
   const playBtn = h('button', { class: 'icon-btn', title: t('anim.play'), onclick: () => togglePlay() }, icon('play', 18));
   const stopBtn = h('button', { class: 'icon-btn', title: t('anim.stop'), onclick: () => player.stop() }, icon('stop', 18));
@@ -60,6 +62,7 @@ export function createAnimationPanel(app: App) {
     listBox,
     note,
     avatarBox,
+    mateBox,
     section('', speed.el, stand.el, yOff.el, button(t('anim.faceFront'), () => app.faceFront())),
   );
 
@@ -207,6 +210,7 @@ export function createAnimationPanel(app: App) {
         h('button', { class: 'anim-name', title: settings.lastSingle.path, onclick: () => playItem([settings.lastSingle!], 0) }, settings.lastSingle.name)));
     }
     renderAvatarAnimations();
+    if (app.mate) mateBox.replaceChildren(app.mate.section()); else clear(mateBox);
     speed.set(settings.speed);
     stand.set(settings.standSize);
     yOff.set(settings.yOffset);

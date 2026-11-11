@@ -26,6 +26,8 @@ VRChat 아바타(VRM으로 내보낸 것)를 macOS 데스크톱에 띄우고, �
 **캡처 앱** (⌘⇧C)
 - 웹캠: MediaPipe 얼굴(ARKit 52종)·몸·손가락 추정 → VMC 송신, 미러, 캘리브레이션(카운트다운), 동작 조정 슬라이더, 전송 부위, 마이크 립싱크
 - iFacialMocap 수신(UDP 49983, v1/v2 형식)
+- **데스크톱 캐릭터 동작 (베타, 실험 기능 스위치)**: 모션 파일 없이 대기 동작(팔 내리기·숨쉬기·눈 깜빡임·시선·체중 이동·자세 바꾸기)과 작은 몸짓(미소·고개 갸웃·까치발 등), 가끔 혼자 하는 행동(기지개·두리번·하품·졸기 등), 동작에 맞춘 표정. 하반신은 다리 IK로 상반신을 따라 움직임(방송 중에는 상반신 위주), 원형 메뉴 「동작」, 배경 투명일 때 캐릭터 조작(클릭 반응 — 머리 쓰다듬기 등, 드래그로 창 이동, 커서 위치 기준 확대/축소) → [가이드](docs/GUIDE.ko.md#데스크톱-캐릭터-동작-베타)
+- **자율 방송 (베타, 실험 기능 스위치)**: 치지직 공식 Open API로 채팅 수신, 로컬 LLM(Ollama / OpenAI 호환) 대답·혼잣말, macOS 음성 또는 로컬 TTS 서버, 립싱크·표정·대기 동작·반응 제스처(손인사·꾸벅·끄덕 등), 방송자 개입(직접 말하기·방송자 채팅), 상반신 구도 → [가이드](docs/GUIDE.ko.md#자율-방송-베타)
 - 표정 형식: VRM 표준 / Perfect Sync / VRCFT(VRChat OSC `/avatar/parameters/v2/*`), VRChat 직접 송신 버튼
 
 ## 구조
@@ -33,6 +35,9 @@ VRChat 아바타(VRM으로 내보낸 것)를 macOS 데스크톱에 띄우고, �
 ```
 electron/            메인 프로세스(창·파일·설정·Syphon 헬퍼 관리), preload(UDP·공유 메모리)
 src/viewer/          뷰어 (three.js + @pixiv/three-vrm)
+src/viewer/mate/     데스크톱 캐릭터 동작 (베타): 대기 동작·행동·제스처, 자율 방송도 함께 사용 (스위치가 켜졌을 때만 불러옴)
+src/viewer/autocast/ 자율 방송 (베타): 스위치가 켜졌을 때만 불러오는 별도 청크
+electron/autocast.js 자율 방송 메인 프로세스: macOS say, 로컬 LLM·TTS 요청, 치지직 OAuth·채팅 세션
 src/capture/         캡처 앱 (MediaPipe Tasks Vision)
 src/shared/          OSC 인코더/디코더, 본/표정 이름표, i18n, UI 헬퍼
 native/src/addon.mm  N-API 애드온: Syphon용 공유 메모리 쓰기, 보조키 상태, 전역 키 모니터
@@ -67,7 +72,10 @@ npm run dev
 ```bash
 npm run dist        # macOS (= npm run dist:mac)
 npm run dist:win    # Windows x64 (NSIS 설치 파일 + zip). 맥에서 크로스 빌드 가능, Wine 불필요
+npm run dist:beta   # 베타 앱 "VRC Avatar Tools Beta" (release-beta/): 번들 ID·설정 폴더가 따로라 정식 앱과 나란히 설치
 ```
+
+`npm run start:beta` 는 개발 중에 베타 채널(실험 기능 기본 ON, 베타 설정 폴더)로 실행합니다.
 
 Apple Silicon에 Rosetta가 없으면(예: macOS 27) electron-builder의 Intel용 `makensis`가 실행되지 않으므로, `scripts/dist-win.js` 가 Homebrew의 네이티브 `makensis` 로 대신 빌드합니다: `brew install makensis` 를 한 번 해 두세요.
 
@@ -78,6 +86,8 @@ Apple Silicon에 Rosetta가 없으면(예: macOS 27) electron-builder의 Intel�
 ### 개발용 자동 테스트
 
 `VAV_TEST_SCRIPT=steps.json`(+ `VAV_USER_DATA=<임시 폴더>`)로 실행하면 JSON 단계(`eval`, `shot`, `wait`, `openCapture`, `exec`, `quit`)를 차례로 실행합니다. 예: 아바타 로드 → 스크린샷 → Syphon 프로브.
+
+자율 방송: 개발 실행에서 `VAV_CHZZK_MOCK=http://127.0.0.1:<port>` 를 주면 치지직 API(로그인·세션·Socket.IO 채팅)를 로컬 테스트 서버로 보냅니다(패키지된 앱에서는 무시).
 
 `npm run test:vavmeta` — glTF 테스트 아바타와 [샘플 사이드카(v1)](test/vavmeta/SampleAvatar.vavmeta.json)로 FX 토글·제스처·아바타 메뉴 패널을 확인합니다 (임시 userData 사용, 스크린샷 경로 출력). 사이드카 형식: [docs/vavmeta.md](docs/vavmeta.md)
 

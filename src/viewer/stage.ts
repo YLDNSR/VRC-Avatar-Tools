@@ -29,6 +29,11 @@ export class CameraRig {
   distance = 3;
   yaw = 0;
   pitch = 0.05;
+  /** Screen-space pixel offset of the camera optical center from the window center (+x right, +y down). */
+  offsetX = 0;
+  offsetY = 0;
+  /** Virtual pet frame height in pixels (keeps character pixel size constant even when window expands for menus). */
+  frameHeight: number | null = null;
   /** extra zoom factor applied on top of distance (zoom emphasis) */
   zoomFactor = 1;
   home = { target: new THREE.Vector3(0, 0.9, 0), distance: 3, pitch: 0.05 };
@@ -48,28 +53,70 @@ export class CameraRig {
     );
     this.camera.lookAt(this.target);
     this.camera.updateMatrixWorld();
+    this.applyProjectionOffset();
+  }
+
+  applyProjectionOffset() {
+    const w = Math.max(1, window.innerWidth);
+    const h = Math.max(1, window.innerHeight);
+    this.camera.updateProjectionMatrix();
+    const scale = this.frameHeight && this.frameHeight > 0 ? this.frameHeight / h : 1;
+    if (this.offsetX || this.offsetY || scale !== 1) {
+      const e = this.camera.projectionMatrix.elements;
+      if (scale !== 1) {
+        e[0] *= scale;
+        e[5] *= scale;
+      }
+      e[8] = -(this.offsetX * 2) / w;
+      e[9] = (this.offsetY * 2) / h;
+      this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
+    }
   }
 
   /** Frames a bounding box (full body) and stores it as the home position. */
-  frame(box: THREE.Box3) {
+  frame(box: THREE.Box3, keepOffset = false) {
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     const height = Math.max(size.y, 0.3);
     const fov = THREE.MathUtils.degToRad(this.camera.fov);
-    // Full body plus a little room for the stand and the toolbar.
-    const fitH = (height * 1.3) / (2 * Math.tan(fov / 2));
-    const fitW = (Math.max(size.x, size.z) * 1.15) / (2 * Math.tan(fov / 2) * this.camera.aspect);
-    this.home.target.set(center.x, box.min.y + height * 0.47, center.z);
+    // Full body plus generous headroom for raised arms (stretching) and room for the stand / toolbar.
+    const fitH = (height * 1.5) / (2 * Math.tan(fov / 2));
+    const fitW = (Math.max(size.x, size.z, height * 0.75) * 1.25) / (2 * Math.tan(fov / 2) * this.camera.aspect);
+    this.home.target.set(center.x, box.min.y + height * 0.54, center.z);
     this.home.distance = Math.max(fitH, fitW, 0.4);
     this.home.pitch = 0.05;
-    this.reset();
+    this.reset(keepOffset);
   }
 
-  reset() {
+  /** Frames the avatar specifically for Desktop Mate mode (full body + overhead stretch margin at 0.65 pet aspect). */
+  frameForMate(box: THREE.Box3) {
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const height = Math.max(size.y, 0.3);
+    const fov = THREE.MathUtils.degToRad(this.camera.fov);
+    const tanHalf = Math.tan(fov / 2);
+    const fitH = (height * 1.56) / (2 * tanHalf);
+    const fitW = (Math.max(size.x, size.z, height * 0.62) * 1.32) / (2 * tanHalf * 0.65);
+    this.home.target.set(center.x, box.min.y + height * 0.54, center.z);
+    this.home.distance = Math.max(fitH, fitW, 0.4);
+    this.home.pitch = 0.04;
     this.target.copy(this.home.target);
     this.distance = this.home.distance;
     this.pitch = this.home.pitch;
     this.yaw = 0;
+    this.offsetX = 0;
+    this.offsetY = 0;
+  }
+
+  reset(keepOffset = false) {
+    this.target.copy(this.home.target);
+    this.distance = this.home.distance;
+    this.pitch = this.home.pitch;
+    this.yaw = 0;
+    if (!keepOffset) {
+      this.offsetX = 0;
+      this.offsetY = 0;
+    }
   }
 
   /** Changes FOV while keeping the subject the same size (dolly zoom). */
@@ -79,7 +126,7 @@ export class CameraRig {
     this.distance *= oldT / newT;
     this.home.distance *= oldT / newT;
     this.camera.fov = fov;
-    this.camera.updateProjectionMatrix();
+    this.applyProjectionOffset();
   }
 
   /** World-space size of one screen pixel at the target distance. */
@@ -89,7 +136,16 @@ export class CameraRig {
   }
 
   snapshot() {
-    return { target: this.target.toArray(), distance: this.distance, yaw: this.yaw, pitch: this.pitch, fov: this.camera.fov };
+    return {
+      target: this.target.toArray(),
+      distance: this.distance,
+      yaw: this.yaw,
+      pitch: this.pitch,
+      fov: this.camera.fov,
+      offsetX: this.offsetX,
+      offsetY: this.offsetY,
+      viewHeight: Math.max(1, window.innerHeight),
+    };
   }
 
   restore(s: any) {
@@ -98,6 +154,8 @@ export class CameraRig {
     this.distance = s.distance;
     this.yaw = s.yaw;
     this.pitch = s.pitch;
+    if (typeof s.offsetX === 'number') this.offsetX = s.offsetX;
+    if (typeof s.offsetY === 'number') this.offsetY = s.offsetY;
   }
 }
 
@@ -116,6 +174,7 @@ export class Stage {
   standBaseRadius = 0.45;
   marker: THREE.Group;
   transparent = false;
+  mateMode = false;
   private lightTarget = new THREE.Object3D();
 
   constructor(canvas: HTMLCanvasElement) {
@@ -186,7 +245,7 @@ export class Stage {
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, hgt, false);
     this.rig.camera.aspect = w / hgt;
-    this.rig.camera.updateProjectionMatrix();
+    this.rig.applyProjectionOffset();
   }
 
   setTransparent(on: boolean) {
@@ -194,18 +253,25 @@ export class Stage {
     this.applyBackground();
   }
 
+  setMateMode(on: boolean) {
+    this.mateMode = on;
+    document.body.classList.toggle('mate-mode', on);
+    this.marker.visible = lighting.marker && !this.mateMode;
+    this.applyBackground();
+  }
+
   applyBackground() {
     const c = new THREE.Color(general.background);
     const k = 0.35 + 0.65 * lighting.brightness;
     c.multiplyScalar(k);
-    if (this.transparent) {
+    if (this.transparent || this.mateMode) {
       this.scene.background = null;
       this.renderer.setClearColor(0x000000, 0);
     } else {
       this.scene.background = c;
       this.renderer.setClearColor(c, 1);
     }
-    document.body.classList.toggle('transparent', this.transparent);
+    document.body.classList.toggle('transparent', this.transparent || this.mateMode);
   }
 
   /** Light direction in world space (unit vector from target toward the light). */
@@ -223,7 +289,7 @@ export class Stage {
     this.mainLight.intensity = Math.PI * lighting.brightness;
     this.ambient.color.copy(color);
     this.ambient.intensity = 0.35 + 0.9 * lighting.brightness;
-    this.marker.visible = lighting.marker;
+    this.marker.visible = lighting.marker && !this.mateMode;
     this.applyBackground();
   }
 
@@ -258,7 +324,7 @@ export class Stage {
   }
 
   updateStand(footY: number, scale: number) {
-    this.stand.visible = general.stand;
+    this.stand.visible = general.stand && !this.mateMode;
     const r = this.standBaseRadius * scale;
     this.stand.scale.set(r, 1, r);
     this.stand.position.y = footY;

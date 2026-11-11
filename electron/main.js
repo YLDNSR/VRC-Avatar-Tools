@@ -15,7 +15,24 @@ const profiles = require('./profiles');
 const isDev = !app.isPackaged;
 const isMac = process.platform === 'darwin';
 const isWin = process.platform === 'win32';
+// Beta builds ("VRC Avatar Tools Beta", npm run dist:beta) keep their own settings folder, so trying
+// new features never touches the stable app's settings. The first beta launch starts from a copy of them.
+const channel = process.env.VAV_CHANNEL || require('../package.json').vavChannel || 'stable';
+const isBeta = channel === 'beta';
 if (process.env.VAV_USER_DATA) app.setPath('userData', process.env.VAV_USER_DATA);
+else if (isBeta) app.setPath('userData', path.join(app.getPath('appData'), 'VRC Avatar Tools Beta'));
+if (isBeta && !process.env.VAV_USER_DATA) {
+  const dst = path.join(app.getPath('userData'), 'settings.json');
+  const src = path.join(app.getPath('appData'), 'VRC Avatar Tools', 'settings.json');
+  try {
+    if (!fs.existsSync(dst) && fs.existsSync(src)) {
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      fs.copyFileSync(src, dst);
+    }
+  } catch (err) {
+    console.error('beta settings copy failed', err);
+  }
+}
 const distDir = path.join(__dirname, '..', 'dist');
 
 let native = null;
@@ -85,7 +102,17 @@ function registerProtocols() {
 
 let viewerWin = null;
 let captureWin = null;
-const viewerState = { transparent: false, alwaysOnTop: true, clickThrough: true, ignoring: false, wantCursor: false };
+let studioBounds = null;
+let mateBounds = null;
+const viewerState = {
+  transparent: false,
+  mateMode: false,
+  mateExpanded: false,
+  alwaysOnTop: true,
+  clickThrough: true,
+  ignoring: false,
+  wantCursor: false,
+};
 
 function appUrl(page) {
   return `app://bundle/${page}`;
@@ -100,7 +127,7 @@ function createViewer() {
     y: bounds.y,
     minWidth: 240,
     minHeight: 240,
-    title: 'VRC Avatar Tools',
+    title: isBeta ? 'VRC Avatar Tools Beta' : 'VRC Avatar Tools',
     transparent: true,
     backgroundColor: '#00000000',
     // macOS keeps the traffic lights over the page; Windows gets a frameless window with the
@@ -114,13 +141,27 @@ function createViewer() {
       sandbox: false,
       nodeIntegration: false,
       backgroundThrottling: false,
+      additionalArguments: [`--vav-channel=${channel}`],
     },
   });
   viewerWin.loadURL(appUrl('viewer.html'));
-  viewerWin.once('ready-to-show', () => viewerWin.show());
+  viewerWin.once('ready-to-show', () => {
+    if (viewerWin && !viewerWin.isDestroyed()) {
+      if (!viewerState.mateMode) studioBounds = viewerWin.getBounds();
+      viewerWin.show();
+    }
+  });
   const saveBounds = () => {
     if (!viewerWin || viewerWin.isDestroyed() || viewerWin.isMinimized()) return;
-    store.set('window.viewer', viewerWin.getBounds());
+    if (viewerState.mateMode) {
+      if (!viewerState.mateExpanded) {
+        mateBounds = viewerWin.getBounds();
+        store.set('window.mate', mateBounds);
+      }
+      return;
+    }
+    studioBounds = viewerWin.getBounds();
+    store.set('window.viewer', studioBounds);
   };
   viewerWin.on('moved', saveBounds);
   viewerWin.on('resized', saveBounds);
@@ -177,18 +218,198 @@ function sendViewer(channel, ...args) {
 }
 
 // ---------------------------------------------------------------------------
-// Transparent mode, click-through and cursor tracking
+// Transparent mode, Desktop Mate mode, click-through and cursor tracking
+
+function workAreaForBounds(b) {
+  const pt = { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+  const display = screen.getDisplayNearestPoint(pt);
+  return { ...display.workArea };
+}
+
+function clampToWorkArea(b, wa) {
+  const width = Math.min(Math.max(180, Math.round(b.width)), wa.width);
+  const height = Math.min(Math.max(220, Math.round(b.height)), wa.height);
+  const x = Math.min(Math.max(Math.round(b.x), wa.x), wa.x + Math.max(0, wa.width - width));
+  const y = Math.min(Math.max(Math.round(b.y), wa.y), wa.y + Math.max(0, wa.height - height));
+  return { x, y, width, height };
+}
+
+/**
+ * Clamps a Desktop Mate pet window so the character's center stays on-screen while allowing
+ * transparent margins of the pet frame to extend beyond the display/dock edges.
+ */
+function clampPetBounds(b, wa) {
+  const width = Math.min(Math.max(180, Math.round(b.width)), Math.round(wa.width * 1.25));
+  const height = Math.min(Math.max(220, Math.round(b.height)), Math.round(wa.height * 1.35));
+  const cx = Math.min(Math.max(b.x + width * 0.5, wa.x + 60), wa.x + wa.width - 60);
+  const cy = Math.min(Math.max(b.y + height * 0.5, wa.y + 60), wa.y + wa.height - 40);
+  return {
+    x: Math.round(cx - width * 0.5),
+    y: Math.round(cy - height * 0.5),
+    width,
+    height,
+  };
+}
+
+function resolveMateBounds(refBounds) {
+  const wa = workAreaForBounds(refBounds);
+  const saved = mateBounds || store.get('window.mate');
+  const h = Math.min(Math.max(240, Math.round(saved?.height || 560)), Math.round(wa.height * 1.35));
+  const w = Math.min(Math.max(180, Math.round(saved?.width || Math.round(h * 0.65))), Math.round(wa.width * 1.25));
+  const x = saved?.x != null ? saved.x : wa.x + wa.width - w - 36;
+  const y = saved?.y != null ? saved.y : wa.y + wa.height - h - 24;
+  return clampPetBounds({ x, y, width: w, height: h }, wa);
+}
+
+function syncNativeWindowTraits() {
+  if (!isMac || !viewerWin || viewerWin.isDestroyed()) return;
+  if (native && typeof native.setWindowMateMode === 'function') {
+    native.setWindowMateMode(viewerWin.getNativeWindowHandle(), !!(viewerState.mateMode || viewerState.transparent));
+  }
+}
 
 function applyTransparentMode() {
-  if (!viewerWin) return;
+  if (!viewerWin || viewerWin.isDestroyed()) return null;
+  if (viewerState.mateMode) return applyMateMode(true);
   const t = viewerState.transparent;
+  viewerWin.setResizable(!t);
   if (isMac) {
     viewerWin.setWindowButtonVisibility(!t);
     viewerWin.setVisibleOnAllWorkspaces(t && viewerState.alwaysOnTop, { visibleOnFullScreen: true });
+    syncNativeWindowTraits();
   }
   viewerWin.setHasShadow(!t);
   viewerWin.setAlwaysOnTop(t && viewerState.alwaysOnTop, 'floating');
-  if (!t || !viewerState.clickThrough) setIgnore(false);
+  if (!t) setIgnore(false);
+  return { overlay: false, from: viewerWin.getBounds(), to: viewerWin.getBounds() };
+}
+
+function applyMateMode(on) {
+  if (!viewerWin || viewerWin.isDestroyed()) return null;
+  const wasMate = viewerState.mateMode;
+  viewerState.mateMode = !!on;
+  if (viewerState.mateMode) {
+    viewerState.transparent = true;
+    const from = viewerWin.getBounds();
+    if (!wasMate) {
+      studioBounds = from;
+      store.set('window.viewer', studioBounds);
+      const target = resolveMateBounds(from);
+      mateBounds = target;
+      viewerState.mateExpanded = false;
+      viewerWin.setMinimumSize(160, 220);
+      viewerWin.setBounds(target, false);
+    }
+    viewerWin.setResizable(false);
+    viewerWin.setHasShadow(false);
+    if (isMac) {
+      viewerWin.setWindowButtonVisibility(false);
+      viewerWin.setVisibleOnAllWorkspaces(viewerState.alwaysOnTop, { visibleOnFullScreen: true });
+      syncNativeWindowTraits();
+    }
+    viewerWin.setAlwaysOnTop(viewerState.alwaysOnTop, 'screen-saver');
+    const to = viewerWin.getBounds();
+    const wa = workAreaForBounds(to);
+    return { mateMode: true, from, to, workArea: wa };
+  } else {
+    const from = viewerWin.getBounds();
+    if (wasMate && !viewerState.mateExpanded) {
+      mateBounds = from;
+      store.set('window.mate', mateBounds);
+    }
+    viewerState.mateExpanded = false;
+    viewerState.transparent = false;
+    const base = studioBounds || store.get('window.viewer') || { width: 900, height: 1000 };
+    const wa = workAreaForBounds(from);
+    const to = clampToWorkArea({
+      x: base.x ?? Math.round(wa.x + (wa.width - (base.width || 900)) / 2),
+      y: base.y ?? Math.round(wa.y + (wa.height - (base.height || 1000)) / 2),
+      width: Math.max(420, base.width || 900),
+      height: Math.max(420, base.height || 1000),
+    }, wa);
+    if (isMac) {
+      syncNativeWindowTraits();
+      viewerWin.setWindowButtonVisibility(true);
+      viewerWin.setVisibleOnAllWorkspaces(false);
+    }
+    viewerWin.setAlwaysOnTop(false);
+    viewerWin.setHasShadow(true);
+    viewerWin.setResizable(true);
+    viewerWin.setMinimumSize(240, 240);
+    viewerWin.setBounds(to, false);
+    studioBounds = viewerWin.getBounds();
+    store.set('window.viewer', studioBounds);
+    setIgnore(false);
+    return { mateMode: false, from, to: studioBounds, workArea: wa };
+  }
+}
+
+function resizeMateWindow(opts = {}) {
+  if (!viewerWin || viewerWin.isDestroyed() || !viewerState.mateMode) return null;
+  const from = viewerWin.getBounds();
+  const base = (!viewerState.mateExpanded ? from : (mateBounds || from));
+  const wa = workAreaForBounds(base);
+  const expanded = !!opts.expanded;
+  const maxPetW = Math.round(wa.width * 1.25);
+  const maxPetH = Math.round(wa.height * 1.35);
+  const targetW = Math.min(Math.max(180, Math.round(opts.width || base.width)), expanded ? wa.width : maxPetW);
+  const targetH = Math.min(Math.max(220, Math.round(opts.height || base.height)), expanded ? wa.height : maxPetH);
+  const ax = typeof opts.anchorX === 'number' ? opts.anchorX : 0.5;
+  const ay = typeof opts.anchorY === 'number' ? opts.anchorY : 0.75;
+
+  let next;
+  if (expanded) {
+    // Expand around the compact character bounds so the character stays at the exact same screen coordinates.
+    mateBounds = {
+      x: base.x,
+      y: base.y,
+      width: Math.min(Math.max(180, Math.round(opts.petWidth || base.width)), maxPetW),
+      height: Math.min(Math.max(220, Math.round(opts.petHeight || base.height)), maxPetH),
+    };
+    const charCx = mateBounds.x + mateBounds.width * 0.5;
+    const charCy = mateBounds.y + mateBounds.height * 0.5;
+    next = clampToWorkArea({
+      x: Math.round(charCx - targetW * 0.5),
+      y: Math.round(charCy - targetH * 0.5),
+      width: targetW,
+      height: targetH,
+    }, wa);
+    viewerState.mateExpanded = true;
+  } else if (opts.restoreOnly) {
+    if (!viewerState.mateExpanded) {
+      return null;
+    }
+    next = clampPetBounds(mateBounds || from, wa);
+    viewerState.mateExpanded = false;
+    mateBounds = next;
+    store.set('window.mate', mateBounds);
+  } else {
+    const ref = viewerState.mateExpanded && mateBounds ? mateBounds : from;
+    const pivotX = ref.x + ref.width * ax;
+    const pivotY = ref.y + ref.height * ay;
+    next = clampPetBounds({
+      x: Math.round(pivotX - targetW * ax),
+      y: Math.round(pivotY - targetH * ay),
+      width: targetW,
+      height: targetH,
+    }, wa);
+    viewerState.mateExpanded = false;
+    mateBounds = next;
+    store.set('window.mate', mateBounds);
+  }
+  viewerWin.setBounds(next, false);
+  viewerWin.setResizable(false);
+  syncNativeWindowTraits();
+  const actual = viewerWin.getBounds();
+  if (!viewerState.mateExpanded) {
+    mateBounds = actual;
+  }
+  const petRef = mateBounds || actual;
+  const charOffset = {
+    x: (petRef.x + petRef.width * 0.5) - (actual.x + actual.width * 0.5),
+    y: (petRef.y + petRef.height * 0.5) - (actual.y + actual.height * 0.5),
+  };
+  return { from, to: actual, petBounds: petRef, charOffset, workArea: wa };
 }
 
 function setIgnore(ignore) {
@@ -199,7 +420,7 @@ function setIgnore(ignore) {
 
 let cursorTimer = null;
 function updateCursorPolling() {
-  const need = !!viewerWin && (viewerState.wantCursor || (viewerState.transparent && viewerState.clickThrough));
+  const need = !!viewerWin && (viewerState.wantCursor || viewerState.transparent || viewerState.mateMode);
   if (need && !cursorTimer) {
     cursorTimer = setInterval(pollCursor, 33);
   } else if (!need && cursorTimer) {
@@ -426,13 +647,25 @@ function registerIpc() {
     appVersion: app.getVersion(),
   }));
 
-  ipcMain.on('win:set-transparent', (_e, opts) => {
-    Object.assign(viewerState, opts);
-    applyTransparentMode();
+  ipcMain.on('win:set-transparent', (e, opts) => {
+    const { centerOn: _c, offset: _o, ...rest } = opts || {};
+    Object.assign(viewerState, rest);
+    const transition = applyTransparentMode();
     updateCursorPolling();
+    e.returnValue = transition;
+  });
+  ipcMain.on('win:set-mate-mode', (e, opts) => {
+    const { mateMode, ...rest } = opts || {};
+    Object.assign(viewerState, rest);
+    const transition = applyMateMode(!!mateMode);
+    updateCursorPolling();
+    e.returnValue = transition;
+  });
+  ipcMain.on('win:resize-mate', (e, opts) => {
+    e.returnValue = resizeMateWindow(opts || {});
   });
   ipcMain.on('win:set-ignore-mouse', (_e, ignore) => {
-    if (!viewerState.transparent || !viewerState.clickThrough) ignore = false;
+    if (!viewerState.transparent && !viewerState.mateMode) ignore = false;
     setIgnore(!!ignore);
   });
   ipcMain.on('win:want-cursor', (_e, want) => {
@@ -442,13 +675,31 @@ function registerIpc() {
   ipcMain.on('win:move-by', (_e, dx, dy) => {
     if (!viewerWin) return;
     const [x, y] = viewerWin.getPosition();
-    viewerWin.setPosition(Math.round(x + dx), Math.round(y + dy));
+    const nx = Math.round(x + dx);
+    const ny = Math.round(y + dy);
+    viewerWin.setPosition(nx, ny);
+    if (viewerState.mateMode && mateBounds) {
+      if (viewerState.mateExpanded) {
+        mateBounds.x = Math.round(mateBounds.x + dx);
+        mateBounds.y = Math.round(mateBounds.y + dy);
+      } else {
+        mateBounds.x = nx;
+        mateBounds.y = ny;
+      }
+      store.set('window.mate', mateBounds);
+    }
   });
   // Windows cannot resize a transparent window by its edges; the settings menu sets the size instead.
   ipcMain.on('win:set-size', (_e, width, height) => {
     if (!viewerWin) return;
-    viewerWin.setSize(Math.round(width), Math.round(height));
-    store.set('window.viewer', viewerWin.getBounds());
+    const w = Math.round(width), h = Math.round(height);
+    if (viewerState.mateMode) {
+      resizeMateWindow({ width: w, height: h, expanded: false });
+      return;
+    }
+    viewerWin.setSize(w, h);
+    studioBounds = viewerWin.getBounds();
+    store.set('window.viewer', studioBounds);
   });
   ipcMain.handle('win:get-size', () => (viewerWin ? viewerWin.getSize() : [0, 0]));
   ipcMain.on('win:close', () => viewerWin && viewerWin.close());
@@ -494,7 +745,17 @@ function registerIpc() {
   ipcMain.handle('login:open-settings', () => shell.openExternal(isMac
     ? 'x-apple.systempreferences:com.apple.LoginItems-Settings.extension'
     : 'ms-settings:startupapps'));
+
+  // Autonomous broadcast (beta): idle until the viewer turns it on; a failure here must not stop the app.
+  try {
+    autocast = require('./autocast');
+    autocast.register(sendViewer);
+  } catch (err) {
+    autocast = null;
+    console.error('[autocast] unavailable', err);
+  }
 }
+let autocast = null;
 
 /** { supported, openAtLogin, status: 'enabled' | 'not-registered' | 'requires-approval' | 'not-found' | 'unsupported' } */
 function loginItemState() {
@@ -582,6 +843,15 @@ app.whenReady().then(() => {
   });
 
   createViewer();
+  screen.on('display-metrics-changed', () => {
+    if (!viewerWin || viewerWin.isDestroyed() || !viewerState.mateMode) return;
+    const cur = viewerWin.getBounds();
+    const wa = workAreaForBounds(cur);
+    const next = viewerState.mateExpanded ? clampToWorkArea(cur, wa) : clampPetBounds(cur, wa);
+    viewerWin.setBounds(next, false);
+    viewerWin.setResizable(false);
+    syncNativeWindowTraits();
+  });
   if (process.argv.includes('--capture')) createCapture();
   // Windows "Open with" / double-clicked .vrm: the file arrives as a command-line argument.
   const fileArg = avatarArg(process.argv);
@@ -654,6 +924,7 @@ app.on('before-quit', () => {
   stopSyphon();
   if (native && globalKeysOn) native.keyMonitorStop();
   if (shortcutKeysOn) globalShortcut.unregisterAll();
+  if (autocast) autocast.shutdown();
   store.flush();
 });
 

@@ -223,6 +223,43 @@ static Napi::Value KeyMonitorStop(const Napi::CallbackInfo &info)
 }
 
 // ---------------------------------------------------------------------------
+// Desktop Mate window mode (macOS NSWindow level / Exposé / resize border control)
+
+static Napi::Value SetWindowMateMode(const Napi::CallbackInfo &info)
+{
+    Napi::Env env = info.Env();
+    if (info.Length() < 2 || !info[0].IsBuffer()) return Napi::Boolean::New(env, false);
+    Napi::Buffer<uint8_t> buf = info[0].As<Napi::Buffer<uint8_t>>();
+    if (buf.Length() < sizeof(void *)) return Napi::Boolean::New(env, false);
+    bool mate = info[1].ToBoolean().Value();
+    void *raw = *reinterpret_cast<void * const *>(buf.Data());
+    if (!raw) return Napi::Boolean::New(env, false);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSView *view = (__bridge NSView *)raw;
+        NSWindow *win = [view window];
+        if (!win) return;
+        if (mate) {
+            win.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces
+                                   | NSWindowCollectionBehaviorStationary
+                                   | NSWindowCollectionBehaviorIgnoresCycle
+                                   | NSWindowCollectionBehaviorFullScreenAuxiliary;
+            win.styleMask = (win.styleMask & ~NSWindowStyleMaskResizable);
+            win.hasShadow = NO;
+            win.movable = NO;
+        } else {
+            win.collectionBehavior = NSWindowCollectionBehaviorDefault
+                                   | NSWindowCollectionBehaviorManaged
+                                   | NSWindowCollectionBehaviorFullScreenPrimary;
+            win.styleMask = (win.styleMask | NSWindowStyleMaskResizable);
+            win.hasShadow = YES;
+            win.movable = YES;
+        }
+    });
+    return Napi::Boolean::New(env, true);
+}
+
+// ---------------------------------------------------------------------------
 
 static Napi::Object Init(Napi::Env env, Napi::Object exports)
 {
@@ -235,6 +272,7 @@ static Napi::Object Init(Napi::Env env, Napi::Object exports)
     exports.Set("inputMonitoringAccess", Napi::Function::New(env, InputMonitoringAccess));
     exports.Set("keyMonitorStart", Napi::Function::New(env, KeyMonitorStart));
     exports.Set("keyMonitorStop", Napi::Function::New(env, KeyMonitorStop));
+    exports.Set("setWindowMateMode", Napi::Function::New(env, SetWindowMateMode));
     env.AddCleanupHook([]() { StopKeyMonitorInternal(); });
     return exports;
 }
